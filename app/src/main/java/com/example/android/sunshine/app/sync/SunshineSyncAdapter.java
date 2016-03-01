@@ -27,6 +27,7 @@ import android.support.annotation.IntDef;
 import android.support.annotation.NonNull;
 import android.support.v4.app.NotificationCompat;
 import android.support.v4.app.TaskStackBuilder;
+import android.text.format.DateUtils;
 import android.text.format.Time;
 import android.util.Log;
 
@@ -61,6 +62,11 @@ import java.util.Vector;
 import java.util.concurrent.ExecutionException;
 
 public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
+
+    private static final String WEARABLE_UPDATE = "/weather_data";
+    private static final String WEARABLE_ID = "com.example.android.sunshine.app.key.id";
+    private static final String WEARABLE_MIN = "com.example.android.sunshine.app.key.min";
+    private static final String WEARABLE_MAX = "com.example.android.sunshine.app.key.max";
 
     public final String LOG_TAG = SunshineSyncAdapter.class.getSimpleName();
     public static final String ACTION_DATA_UPDATED =
@@ -330,6 +336,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 high = temperatureObject.getDouble(OWM_MAX);
                 low = temperatureObject.getDouble(OWM_MIN);
 
+
                 ContentValues weatherValues = new ContentValues();
 
                 weatherValues.put(WeatherContract.WeatherEntry.COLUMN_LOC_KEY, locationId);
@@ -344,6 +351,11 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 weatherValues.put(WeatherContract.WeatherEntry.COLUMN_WEATHER_ID, weatherId);
 
                 cVVector.add(weatherValues);
+
+                // If today send to wearable
+                if (DateUtils.isToday(dateTime)) {
+                    notifyWear(weatherId, (int) high, (int) low);
+                }
             }
 
             int inserted = 0;
@@ -361,7 +373,6 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 updateWidgets();
                 updateMuzei();
                 notifyWeather();
-                notifyWear();
             }
             Log.d(LOG_TAG, "Sync Complete. " + cVVector.size() + " Inserted");
             setLocationStatus(getContext(), LOCATION_STATUS_OK);
@@ -391,7 +402,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
         }
     }
 
-    private void notifyWear() {
+    private void notifyWear(int weatherId, int high, int low) {
         Log.d("ZAQ", "============== notifyWear ===============");
 
         Context context = getContext();
@@ -405,92 +416,49 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
         int tempWeatherMax = prefs.getInt(weatherMaxKey, 0);
 
 
-        // Last sync was more than 1 day ago, let's send a notification with the weather.
-        String locationQuery = Utility.getPreferredLocation(context);
+        if (weatherId != tempWeatherId || high != tempWeatherMax || low == tempWeatherMin) {
+            sendToWearable(weatherId, high, low);
+            Log.d("ZAQ", "Try to send");
 
-        Uri weatherUri = WeatherContract.WeatherEntry.buildWeatherLocationWithDate(locationQuery, System.currentTimeMillis());
-
-        // we'll query our contentProvider, as always
-        Cursor cursor = context.getContentResolver().query(weatherUri, NOTIFY_WEATHER_PROJECTION, null, null, null);
-
-        if (cursor.moveToFirst()) {
-            int weatherId = cursor.getInt(INDEX_WEATHER_ID);
-            double high = cursor.getDouble(INDEX_MAX_TEMP);
-            double low = cursor.getDouble(INDEX_MIN_TEMP);
-
-            if (weatherId != tempWeatherId || (int) high != tempWeatherMax || (int) low == tempWeatherMin) {
-                sendToWearable(weatherId, (int) high, (int) low);
-            }
-
-                    /*
-                    String desc = cursor.getString(INDEX_SHORT_DESC);
-
-                    int iconId = Utility.getIconResourceForWeatherCondition(weatherId);
-                    */
-/*                    Resources resources = context.getResources();
-                    int artResourceId = Utility.getArtResourceForWeatherCondition(weatherId);
-                    String artUrl = Utility.getArtUrlForWeatherCondition(context, weatherId);*/
-
-/*                    // On Honeycomb and higher devices, we can retrieve the size of the large icon
-                    // Prior to that, we use a fixed size
-                    @SuppressLint("InlinedApi")
-                    int largeIconWidth = Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB
-                            ? resources.getDimensionPixelSize(android.R.dimen.notification_large_icon_width)
-                            : resources.getDimensionPixelSize(R.dimen.notification_large_icon_default);
-                    @SuppressLint("InlinedApi")
-                    int largeIconHeight = Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB
-                            ? resources.getDimensionPixelSize(android.R.dimen.notification_large_icon_height)
-                            : resources.getDimensionPixelSize(R.dimen.notification_large_icon_default);*/
-/*
-                    // Retrieve the large icon
-                  Glide.with(context)
-                                .load(artUrl)
-                                .asBitmap()
-                                .error(artResourceId)
-                                .fitCenter()
-                                .into(largeIconWidth, largeIconHeight).get();*/
-
-
- /*                   // Define the text of the forecast.
-                    String contentText = String.format(context.getString(R.string.format_notification),
-                            desc,
-                            Utility.formatTemperature(context, high),
-                            Utility.formatTemperature(context, low));
-*/
-
-
-            //refreshing last sync
             SharedPreferences.Editor editor = prefs.edit();
             editor.putInt(weatherIdKey, weatherId);
-            editor.putInt(weatherMinKey, (int) low);
-            editor.putInt(weatherMaxKey, (int) high);
+            editor.putInt(weatherMinKey, low);
+            editor.putInt(weatherMaxKey, high);
             editor.commit();
+        } else {
+            Log.d("ZAQ", "Not sent");
         }
-        cursor.close();
+
+        //refreshing last sync
+
     }
 
     private void sendToWearable(int weatherId, int high, int low) {
-        if (!mGoogleApiClient.isConnected()) {
-            return;
-        }
+        if (mGoogleApiClient != null) {
+            mGoogleApiClient.connect();
+            if (!mGoogleApiClient.isConnected()) {
+                Log.d("ZAQ", "mGoogleApiClient isNotConnected");
+                return;
+            }
 
-        PutDataMapRequest putDataMapRequest = PutDataMapRequest.create("/weather-data");
-        putDataMapRequest.getDataMap().putInt("weather-id", weatherId);
-        putDataMapRequest.getDataMap().putInt("weather-min", low);
-        putDataMapRequest.getDataMap().putInt("weather-max", high);
+            PutDataMapRequest putDataMapRequest = PutDataMapRequest.create(WEARABLE_UPDATE);
+            putDataMapRequest.getDataMap().putInt(WEARABLE_ID, weatherId);
+            putDataMapRequest.getDataMap().putInt(WEARABLE_MIN, low);
+            putDataMapRequest.getDataMap().putInt(WEARABLE_MAX, high);
 
-        PutDataRequest request = putDataMapRequest.asPutDataRequest();
-        Wearable.DataApi.putDataItem(mGoogleApiClient, request)
-                .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
-                    @Override
-                    public void onResult(@NonNull DataApi.DataItemResult dataItemResult) {
-                        if (!dataItemResult.getStatus().isSuccess()) {
-                            Log.d("ZAQ", "===== Failed");
-                        } else {
-                            Log.d("ZAQ", "===== Success");
+            PutDataRequest request = putDataMapRequest.asPutDataRequest();
+            Wearable.DataApi.putDataItem(mGoogleApiClient, request)
+                    .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
+                        @Override
+                        public void onResult(@NonNull DataApi.DataItemResult dataItemResult) {
+                            if (!dataItemResult.getStatus().isSuccess()) {
+                                Log.d("ZAQ", "===== Failed");
+                            } else {
+                                Log.d("ZAQ", "===== Success");
+                            }
                         }
-                    }
-                });
+                    });
+        }
     }
 
     private void notifyWeather() {
@@ -778,5 +746,6 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                     }
                 })
                 .build();
+        mGoogleApiClient.connect();
     }
 }
