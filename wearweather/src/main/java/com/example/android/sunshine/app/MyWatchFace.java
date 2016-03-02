@@ -16,10 +16,12 @@
 
 package com.example.android.sunshine.app;
 
+import android.annotation.SuppressLint;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
+import android.content.SharedPreferences;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -31,6 +33,7 @@ import android.graphics.Typeface;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
+import android.preference.PreferenceManager;
 import android.support.annotation.NonNull;
 import android.support.annotation.Nullable;
 import android.support.wearable.watchface.CanvasWatchFaceService;
@@ -110,15 +113,16 @@ public class MyWatchFace extends CanvasWatchFaceService {
             GoogleApiClient.ConnectionCallbacks,
             GoogleApiClient.OnConnectionFailedListener {
 
-        private int mHighTemp, mLowTemp, mIconId;
+        private int mHighTemp;
+        private int mLowTemp;
         private Bitmap mIconBitmap;
 
 
         private GoogleApiClient mGoogleApiClient;
         final Handler mUpdateTimeHandler = new EngineHandler(this);
         boolean mRegisteredTimeZoneReceiver = false;
-        Paint mBackgroundPaint;
         Paint mTextPaint;
+        Paint mTempPaint;
         Paint mBitmapPaint;
         boolean mAmbient;
         Time mTime;
@@ -129,10 +133,11 @@ public class MyWatchFace extends CanvasWatchFaceService {
                 mTime.setToNow();
             }
         };
-        int mTapCount;
 
         float mXOffset;
         float mYOffset;
+        float mTempYOffset;
+        private boolean isRound;
 
         /**
          * Whether the display supports fewer bits for each color in ambient mode. When true, we
@@ -160,18 +165,41 @@ public class MyWatchFace extends CanvasWatchFaceService {
             Resources resources = MyWatchFace.this.getResources();
             mYOffset = resources.getDimension(R.dimen.digital_y_offset);
 
-            mBackgroundPaint = new Paint();
-            mBackgroundPaint.setColor(resources.getColor(R.color.background));
-
-            mTextPaint = new Paint();
             mTextPaint = createTextPaint(resources.getColor(R.color.digital_text));
+            mTempPaint = createTextPaint(resources.getColor(R.color.digital_text));
+            mTempPaint.setTextSize(resources.getDimension(R.dimen.digital_temp_size));
 
             mBitmapPaint = new Paint();
             mBitmapPaint.setAntiAlias(true);
 
             mTime = new Time();
 
+            getDataFromSharedPreferences();
 
+        }
+
+        private void getDataFromSharedPreferences() {
+            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
+
+            String weatherIdKey = getApplicationContext().getString(R.string.wear_temp_weather_id);
+            String weatherMinKey = getApplicationContext().getString(R.string.wear_temp_temp_min);
+            String weatherMaxKey = getApplicationContext().getString(R.string.wear_temp_temp_max);
+
+            mIconBitmap = getBitmapByWeatherId(prefs.getInt(weatherIdKey, 0));
+            mLowTemp = prefs.getInt(weatherMinKey, -300);
+            mHighTemp = prefs.getInt(weatherMaxKey, -300);
+        }
+
+        private void saveDataToSharedPreferences(int weatherId, int high, int low) {
+            SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(getApplicationContext());
+            String weatherIdKey = getApplicationContext().getString(R.string.wear_temp_weather_id);
+            String weatherMinKey = getApplicationContext().getString(R.string.wear_temp_temp_min);
+            String weatherMaxKey = getApplicationContext().getString(R.string.wear_temp_temp_max);
+            SharedPreferences.Editor editor = prefs.edit();
+            editor.putInt(weatherIdKey, weatherId);
+            editor.putInt(weatherMinKey, low);
+            editor.putInt(weatherMaxKey, high);
+            editor.commit();
         }
 
 
@@ -240,11 +268,14 @@ public class MyWatchFace extends CanvasWatchFaceService {
 
             // Load resources that have alternate values for round watches.
             Resources resources = MyWatchFace.this.getResources();
-            boolean isRound = insets.isRound();
+            isRound = insets.isRound();
             mXOffset = resources.getDimension(isRound
                     ? R.dimen.digital_x_offset_round : R.dimen.digital_x_offset);
             float textSize = resources.getDimension(isRound
                     ? R.dimen.digital_text_size_round : R.dimen.digital_text_size);
+
+            mTempYOffset = resources.getDimension(isRound
+                    ? R.dimen.digital_temp_y_offset_round : R.dimen.digital_temp_y_offset);
 
             mTextPaint.setTextSize(textSize);
         }
@@ -294,9 +325,6 @@ public class MyWatchFace extends CanvasWatchFaceService {
                 case TAP_TYPE_TAP:
                     // The user has completed the tap gesture.
                     Log.d("ZAQ", "TAP 3");
-                    mTapCount++;
-                    mBackgroundPaint.setColor(resources.getColor(mTapCount % 2 == 0 ?
-                            R.color.background : R.color.background2));
                     break;
             }
             invalidate();
@@ -308,20 +336,35 @@ public class MyWatchFace extends CanvasWatchFaceService {
             if (isInAmbientMode()) {
                 canvas.drawColor(Color.BLACK);
             } else {
-                canvas.drawRect(0, 0, bounds.width(), bounds.height(), mBackgroundPaint);
+                canvas.drawColor(Color.parseColor("#607D8B"));
             }
 
             // Draw H:MM in ambient mode or H:MM:SS in interactive mode.
             mTime.setToNow();
+
+            @SuppressLint("DefaultLocale")
             String text = mAmbient
                     ? String.format("%d:%02d", mTime.hour, mTime.minute)
                     : String.format("%d:%02d:%02d", mTime.hour, mTime.minute, mTime.second);
 
             canvas.drawText(text, mXOffset, mYOffset, mTextPaint);
 
-            if (mIconBitmap != null && !mIconBitmap.isRecycled()) {
-                canvas.drawBitmap(mIconBitmap, 0, mYOffset, mBitmapPaint);
+            if (mIconBitmap != null && !mIconBitmap.isRecycled() && mHighTemp > -300 && mLowTemp > -300) {
+                if (!isInAmbientMode()) {
+                    if (isRound) {
+                        canvas.drawBitmap(mIconBitmap, bounds.centerX() - mIconBitmap.getWidth() / 2, mYOffset, mBitmapPaint);
+                    } else {
+                        int paddingRight = bounds.right - mIconBitmap.getWidth();
+                        canvas.drawBitmap(mIconBitmap, paddingRight, 0, mBitmapPaint);
+                    }
+                }
+
+                String highString = formatTemperature(getApplicationContext(), mHighTemp);
+                String lowString = formatTemperature(getApplicationContext(), mLowTemp);
+                text = highString.concat(" ").concat(lowString);
+                canvas.drawText(text, bounds.centerX() - mIconBitmap.getWidth() / 2, mTempYOffset, mTempPaint);
             }
+
         }
 
         /**
@@ -375,22 +418,13 @@ public class MyWatchFace extends CanvasWatchFaceService {
                     if (item.getUri().getPath().equals(WEARABLE_UPDATE)) {
                         final DataMap dataMap = DataMapItem.fromDataItem(item).getDataMap();
 
-                        if (dataMap.containsKey(WEARABLE_MAX)) {
-                            mHighTemp = dataMap.getInt(WEARABLE_MAX);
-                            Log.d("ZAQ", "mHighTemp: " + mHighTemp);
-                        }
+                        mHighTemp = dataMap.getInt(WEARABLE_MAX);
 
-                        if (dataMap.containsKey(WEARABLE_MIN)) {
-                            mLowTemp = dataMap.getInt(WEARABLE_MIN);
-                            Log.d("ZAQ", "mLowTemp: " + mLowTemp);
-                        }
+                        mLowTemp = dataMap.getInt(WEARABLE_MIN);
+                        int weatherId = dataMap.getInt(WEARABLE_ID);
+                        mIconBitmap = getBitmapByWeatherId(weatherId);
 
-                        if (dataMap.containsKey(WEARABLE_ID)) {
-                            int weatherId = dataMap.getInt(WEARABLE_ID);
-                            Log.d("ZAQ", "mWeatherId: " + weatherId);
-                            mIconId = getIconResourceForWeatherCondition(weatherId);
-                            mIconBitmap = BitmapFactory.decodeResource(getResources(), mIconId);
-                        }
+                        saveDataToSharedPreferences(weatherId, mHighTemp, mLowTemp);
                     }
 
                     if (isVisible() && !isInAmbientMode()) {
@@ -410,6 +444,16 @@ public class MyWatchFace extends CanvasWatchFaceService {
     }
 
 
+    private Bitmap getBitmapByWeatherId(int weatherId) {
+        if (weatherId == 0) {
+            return null;
+        }
+
+        Log.d("ZAQ", "mWeatherId: " + weatherId);
+        int iconId = getIconResourceForWeatherCondition(weatherId);
+        return BitmapFactory.decodeResource(getResources(), iconId);
+    }
+
     /**
      * Helper method to provide the icon resource id according to the weather condition id returned
      * by the OpenWeatherMap call.
@@ -417,7 +461,7 @@ public class MyWatchFace extends CanvasWatchFaceService {
      * @param weatherId from OpenWeatherMap API response
      * @return resource id for the corresponding icon. -1 if no relation is found.
      */
-    public static int getIconResourceForWeatherCondition(int weatherId) {
+    private static int getIconResourceForWeatherCondition(int weatherId) {
         // Based on weather code data found at:
         // http://bugs.openweathermap.org/projects/api/wiki/Weather_Condition_Codes
         if (weatherId >= 200 && weatherId <= 232) {
@@ -444,6 +488,23 @@ public class MyWatchFace extends CanvasWatchFaceService {
             return R.drawable.ic_cloudy;
         }
         return -1;
+    }
+
+    private static String formatTemperature(Context context, double temperature) {
+        // Data stored in Celsius by default.  If user prefers to see in Fahrenheit, convert
+        // the values here.
+        if (!isMetric(context)) {
+            temperature = (temperature * 1.8) + 32;
+        }
+        // For presentation, assume the user doesn't care about tenths of a degree.
+        return String.format(context.getString(R.string.format_temperature), temperature);
+    }
+
+    private static boolean isMetric(Context context) {
+        SharedPreferences prefs = PreferenceManager.getDefaultSharedPreferences(context);
+        return prefs.getString(context.getString(R.string.pref_units_key),
+                context.getString(R.string.pref_units_metric))
+                .equals(context.getString(R.string.pref_units_metric));
     }
 
 }

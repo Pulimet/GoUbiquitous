@@ -1,4 +1,19 @@
-<resources>
+<resources xmlns:xliff="http://schemas.android.com/tools">
     <string name="app_name">Wear Weather</string>
     <string name="my_digital_name">A Wear Weather</string>
+    <string name="format_temperature"><xliff:g id="temp">%1.0f</xliff:g>\u00B0</string>
+
+    <!-- Key name for temperature unit preference in SharedPreferences [CHAR LIMIT=NONE] -->
+    <string name="pref_units_key" translatable="false">units</string>
+
+    <!-- Value in SharedPreferences for metric temperature unit option [CHAR LIMIT=NONE] -->
+    <string name="pref_units_metric" translatable="false">metric</string>
+
+    <!-- Value in SharedPreferences for imperial temperature unit option [CHAR LIMIT=NONE] -->
+    <string name="pref_units_imperial" translatable="false">imperial</string>
+
+    <!--Wear temp-->
+    <string name="wear_temp_weather_id" translatable="false">wearWeatherId</string>
+    <string name="wear_temp_temp_min" translatable="false">wearWeatherMin</string>
+    <string name="wear_temp_temp_max" translatable="false">wearWeatherMax</string>
 </resources>
